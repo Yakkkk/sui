@@ -35,4 +35,6 @@ pub enum Error {
     InsufficientFund { address: SuiAddress, amount: u128 },
     #[error("Invalid signature")]
     InvalidSignature,
+    #[error("IPC error: {0}")]
+    IpcError(String),
 }

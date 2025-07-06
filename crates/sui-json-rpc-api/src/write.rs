@@ -64,4 +64,33 @@ pub trait WriteApi {
         &self,
         tx_bytes: Base64,
     ) -> RpcResult<DryRunTransactionBlockResponse>;
+
+    /// Return transaction execution effects including the gas cost summary,
+    /// while the effects are not committed to the chain. This variant allows
+    /// overriding specific objects in the transaction context for testing purposes.
+    /// 
+    /// This method is useful for:
+    /// - Testing transaction behavior with modified object states
+    /// - Simulating transactions with hypothetical object changes
+    /// - MEV (Maximal Extractable Value) analysis and optimization
+    /// - Advanced debugging and development scenarios
+    /// 
+    /// # Parameters
+    /// * `tx_bytes` - BCS serialized transaction data bytes without its type tag, as base-64 encoded string
+    /// * `override_objects` - BCS serialized vector of (ObjectID, Object) pairs to override in the execution context, as base-64 encoded string
+    /// 
+    /// # Security Note
+    /// This method is only available on fullnodes and should not be used in production
+    /// transaction submission. The override objects are used only for simulation and
+    /// do not affect the actual blockchain state.
+    /// 
+    /// # Returns
+    /// A `DryRunTransactionBlockResponse` containing the simulated transaction effects,
+    /// events, object changes, and balance changes based on the overridden object states.
+    #[method(name = "dryRunTransactionBlockOverride")]
+    async fn dry_run_transaction_block_override(
+        &self,
+        tx_bytes: Base64,
+        override_objects: Base64,
+    ) -> RpcResult<DryRunTransactionBlockResponse>;
 }

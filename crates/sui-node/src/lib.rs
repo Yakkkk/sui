@@ -13,6 +13,7 @@ use arc_swap::ArcSwap;
 use fastcrypto_zkp::bn254::zk_login::JwkId;
 use fastcrypto_zkp::bn254::zk_login::OIDCProvider;
 use futures::future::BoxFuture;
+use ipc_server::build_ipc_server;
 use mysten_common::debug_fatal;
 use mysten_network::server::SUI_TLS_SERVER_NAME;
 use prometheus::Registry;
@@ -150,6 +151,7 @@ use crate::metrics::{GrpcMetrics, SuiNodeMetrics};
 
 pub mod admin;
 mod handle;
+mod ipc_server;
 pub mod metrics;
 
 pub struct ValidatorComponents {
@@ -241,6 +243,7 @@ pub struct SuiNode {
     /// The http servers responsible for serving RPC traffic (gRPC and JSON-RPC)
     #[allow(unused)]
     http_servers: HttpServers,
+    _ipc_server: Option<tokio::task::JoinHandle<()>>,
 
     state: Arc<AuthorityState>,
     transaction_orchestrator: Option<Arc<TransactiondOrchestrator<NetworkAuthorityClient>>>,
@@ -801,6 +804,15 @@ impl SuiNode {
             None
         };
 
+        let metrics = Arc::new(JsonRpcMetrics::new(&prometheus_registry));
+        let ipc_server = build_ipc_server(
+            state.clone(),
+            &transaction_orchestrator.clone(),
+            &config,
+            metrics.clone(),
+        )
+        .await?;
+
         let (http_servers, subscription_service_checkpoint_sender) = build_http_servers(
             state.clone(),
             state_sync_store,
@@ -808,6 +820,7 @@ impl SuiNode {
             &config,
             &prometheus_registry,
             server_version,
+            metrics,
         )
         .await?;
 
@@ -885,6 +898,7 @@ impl SuiNode {
             config,
             validator_components: Mutex::new(validator_components),
             http_servers,
+            _ipc_server: ipc_server,
             state,
             transaction_orchestrator,
             registry_service,
@@ -2229,6 +2243,7 @@ async fn build_http_servers(
     config: &NodeConfig,
     prometheus_registry: &Registry,
     server_version: ServerVersion,
+    metrics: Arc<JsonRpcMetrics>,
 ) -> Result<(
     HttpServers,
     Option<tokio::sync::mpsc::Sender<CheckpointData>>,
@@ -2251,7 +2266,6 @@ async fn build_http_servers(
 
         let kv_store = build_kv_store(&state, config, prometheus_registry)?;
 
-        let metrics = Arc::new(JsonRpcMetrics::new(prometheus_registry));
         server.register_module(ReadApi::new(
             state.clone(),
             kv_store.clone(),

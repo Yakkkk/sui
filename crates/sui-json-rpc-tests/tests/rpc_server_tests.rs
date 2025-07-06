@@ -1046,3 +1046,83 @@ async fn test_zklogin_verify() -> Result<(), anyhow::Error> {
     assert!(!res.errors.is_empty());
     Ok(())
 }
+
+#[sim_test]
+async fn test_dry_run_transaction_block_override() -> Result<(), anyhow::Error> {
+    let cluster = TestClusterBuilder::new().build().await;
+    let http_client = cluster.rpc_client();
+    let address = cluster.get_address_0();
+
+    // Get objects for the test
+    let objects = http_client
+        .get_owned_objects(
+            address,
+            Some(SuiObjectResponseQuery::new_with_options(
+                SuiObjectDataOptions::new()
+                    .with_type()
+                    .with_owner()
+                    .with_content(),
+            )),
+            None,
+            None,
+        )
+        .await?
+        .data;
+
+    // Find a coin object to transfer
+    let coin_object = objects
+        .iter()
+        .find(|obj| {
+            obj.object()
+                .unwrap()
+                .type_
+                .as_ref()
+                .map(|t| t.to_string().contains("coin::Coin"))
+                .unwrap_or(false)
+        })
+        .unwrap();
+
+    let original_coin = coin_object.object().unwrap();
+    let coin_id = original_coin.object_id;
+    let gas_id = objects.last().unwrap().object().unwrap().object_id;
+
+    // Create a transfer transaction with sufficient gas budget
+    let transaction_bytes: TransactionBlockBytes = http_client
+        .transfer_object(address, coin_id, Some(gas_id), 10_000_000.into(), address)
+        .await?;
+
+    let tx = cluster
+        .wallet
+        .sign_transaction(&transaction_bytes.to_data()?);
+    let (tx_bytes, _) = tx.to_tx_bytes_and_signatures();
+
+    // Test 1: Normal dry run first
+    let normal_dryrun = http_client
+        .dry_run_transaction_block(tx_bytes.clone())
+        .await?;
+
+    // Test 2: Create empty override objects for this test 
+    // This tests the API without complex object manipulation
+    let override_objects: Vec<(ObjectID, sui_types::object::Object)> = Vec::new();
+
+    // Serialize override objects
+    let override_objects_bytes = bcs::to_bytes(&override_objects)?;
+    let override_objects_b64 = Base64::from_bytes(&override_objects_bytes);
+
+    // Test 3: Dry run with override
+    let override_dryrun = http_client
+        .dry_run_transaction_block_override(tx_bytes, override_objects_b64)
+        .await?;
+
+    // Verify that both dry runs succeed
+    assert!(normal_dryrun.effects.status().is_ok());
+    assert!(override_dryrun.effects.status().is_ok());
+
+    // The object changes should be similar structure but may have different specifics
+    assert_eq!(
+        normal_dryrun.object_changes.len(),
+        override_dryrun.object_changes.len()
+    );
+
+    Ok(())
+}

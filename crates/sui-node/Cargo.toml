@@ -20,6 +20,7 @@ base64.workspace = true
 bcs.workspace = true
 clap.workspace = true
 consensus-core.workspace = true
+interprocess.workspace = true
 prometheus.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
@@ -31,6 +32,7 @@ http.workspace = true
 reqwest.workspace = true
 tap.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 bin-version.workspace = true
 url.workspace = true
 humantime.workspace = true
