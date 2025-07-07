@@ -601,6 +601,15 @@ pub trait ExecutionCacheWrite: Send + Sync {
     /// transaction outputs.
     #[cfg(test)]
     fn write_object_entry_for_test(&self, object: Object);
+
+    fn update_package_cache<'a>(
+        &'a self,
+        package_updates: &'a [(ObjectID, Object)],
+    ) -> BoxFuture<'a, SuiResult>;
+
+    fn reload_objects(&self, objects: Vec<(ObjectID, Object)>);
+
+    fn update_underlying(&self, clear_cache: bool);
 }
 
 pub trait CheckpointCache: Send + Sync {
