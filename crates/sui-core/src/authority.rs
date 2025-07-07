@@ -1757,8 +1757,7 @@ impl AuthorityState {
             monitored_scope("Execution::commit_certificate");
         let _metrics_guard = self.metrics.commit_certificate_latency.start_timer();
 
-        let tx_key = certificate.key();
-        let tx_digest = *certificate.digest();
+        let tx_digest = certificate.digest();
         let output_keys = transaction_outputs.output_keys.clone();
 
         // Clone data needed for async tasks before moving transaction_outputs
@@ -1770,7 +1769,11 @@ impl AuthorityState {
 
         // The insertion to epoch_store is not atomic with the insertion to the perpetual store. This is OK because
         // we insert to the epoch store first. And during lookups we always look up in the perpetual store first.
-        epoch_store.insert_tx_key(tx_key, tx_digest)?;
+        epoch_store.insert_executed_in_epoch(tx_digest);
+        let key = certificate.key();
+        if !matches!(key, TransactionKey::Digest(_)) {
+            epoch_store.insert_tx_key(key, *tx_digest)?;
+        }
 
         // Allow testing what happens if we crash here.
         fail_point!("crash");
@@ -1845,7 +1848,7 @@ impl AuthorityState {
                 // Notifies transaction manager about transaction and output objects committed.
                 // This provides necessary information to transaction manager to start executing
                 // additional ready transactions.
-                manager.notify_commit(&tx_digest, output_keys, epoch_store);
+                manager.notify_commit(tx_digest, output_keys, epoch_store);
             }
         }
 
