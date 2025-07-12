@@ -1,0 +1,45 @@
+[Unit]
+Description=Sui Fullnode
+Documentation=https://docs.sui.io/
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=sui
+Group=sui
+WorkingDirectory=/opt/sui
+ExecStart=/opt/sui/bin/sui-node --config-path /opt/sui/config/fullnode.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10
+StartLimitInterval=60
+StartLimitBurst=3
+
+# 输出控制
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sui-fullnode
+
+# 环境变量
+Environment=RUST_LOG=info,sui_node=info
+Environment=RUST_BACKTRACE=1
+
+# 资源限制
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# 安全设置
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/sui
+
+# 进程管理
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

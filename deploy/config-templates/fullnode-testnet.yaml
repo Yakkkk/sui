@@ -1,0 +1,48 @@
+# Sui Fullnode 测试网配置模板
+# 使用方法: cp fullnode-testnet.yaml /opt/sui/config/fullnode.yaml
+
+# 数据库路径
+db-path: "/opt/sui/db"
+
+# 网络地址配置
+network-address: "/ip4/0.0.0.0/tcp/8080/http"
+metrics-address: "0.0.0.0:9184"
+json-rpc-address: "0.0.0.0:9000"
+
+# 启用事件处理
+enable-event-processing: true
+
+# P2P 网络配置
+p2p-config:
+  listen-address: "0.0.0.0:8084"
+  # 可选: 添加种子节点
+  # seed-peers:
+  #   - address: "/dns/sui-testnet-fullnode.example.com/udp/8084"
+  #     peer-id: "0x..."
+
+# 创世文件位置
+genesis:
+  genesis-file-location: "/opt/sui/config/genesis.blob"
+
+# 数据修剪配置
+authority-store-pruning-config:
+  num-latest-epoch-dbs-to-retain: 3
+  epoch-db-pruning-period-secs: 3600
+  num-epochs-to-retain: 1
+  max-checkpoints-in-batch: 10
+  max-transactions-in-batch: 1000
+  pruning-run-delay-seconds: 60
+
+# 状态同步配置 - 测试网
+state-archive-read-config:
+  - ingestion-url: "https://checkpoints.testnet.sui.io"
+    concurrency: 5
+
+# 可选: 启用索引处理
+# enable-index-processing: true
+
+# 可选: 配置RPC限制
+# json-rpc-server-config:
+#   max-request-size: 2097152
+#   max-response-size: 2097152
+#   max-subscriptions: 100

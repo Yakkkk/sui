@@ -1,0 +1,70 @@
+# Sui Fullnode 主网配置模板
+# 使用方法: cp fullnode-mainnet.yaml /opt/sui/config/fullnode.yaml
+
+# 数据库路径
+db-path: "/opt/sui/db"
+
+# 网络地址配置
+network-address: "/ip4/0.0.0.0/tcp/8080/http"
+metrics-address: "0.0.0.0:9184"
+json-rpc-address: "0.0.0.0:9000"
+
+# 启用事件处理
+enable-event-processing: true
+
+# P2P 网络配置
+p2p-config:
+  listen-address: "0.0.0.0:8084"
+  # 可选: 添加种子节点
+  # seed-peers:
+  #   - address: "/dns/sui-mainnet-fullnode.example.com/udp/8084"
+  #     peer-id: "0x..."
+  seed-peers:
+    - address: /dns/mel-00.mainnet.sui.io/udp/8084
+      peer-id: d32b55bdf1737ec415df8c88b3bf91e194b59ee3127e3f38ea46fd88ba2e7849
+    - address: /dns/ewr-00.mainnet.sui.io/udp/8084
+      peer-id: c7bf6cb93ca8fdda655c47ebb85ace28e6931464564332bf63e27e90199c50ee
+    - address: /dns/ewr-01.mainnet.sui.io/udp/8084
+      peer-id: 3227f8a05f0faa1a197c075d31135a366a1c6f3d4872cb8af66c14dea3e0eb66
+    - address: /dns/lhr-00.mainnet.sui.io/udp/8084
+      peer-id: c619a5e0f8f36eac45118c1f8bda28f0f508e2839042781f1d4a9818043f732c
+    - address: /dns/sui-mainnet-ssfn-1.nodeinfra.com/udp/8084
+      peer-id: 0c52ca8d2b9f51be4a50eb44ace863c05aadc940a7bd15d4d3f498deb81d7fc6
+    - address: /dns/sui-mainnet-ssfn-2.nodeinfra.com/udp/8084
+      peer-id: 1dbc28c105aa7eb9d1d3ac07ae663ea638d91f2b99c076a52bbded296bd3ed5c
+    - address: /dns/sui-mainnet-ssfn-ashburn-na.overclock.run/udp/8084
+      peer-id: 5ff8461ab527a8f241767b268c7aaf24d0312c7b923913dd3c11ee67ef181e45
+    - address: /dns/sui-mainnet-ssfn-dallas-na.overclock.run/udp/8084
+      peer-id: e1a4f40d66f1c89559a195352ba9ff84aec28abab1d3aa1c491901a252acefa6
+    - address: /dns/ssn01.mainnet.sui.rpcpool.com/udp/8084
+      peer-id: fadb7ccb0b7fc99223419176e707f5122fef4ea686eb8e80d1778588bf5a0bcd
+    - address: /dns/ssn02.mainnet.sui.rpcpool.com/udp/8084
+      peer-id: 13783584a90025b87d4604f1991252221e5fd88cab40001642f4b00111ae9b7e
+
+
+# 创世文件位置
+genesis:
+  genesis-file-location: "/opt/sui/config/genesis.blob"
+
+# 数据修剪配置
+authority-store-pruning-config:
+  num-latest-epoch-dbs-to-retain: 3
+  epoch-db-pruning-period-secs: 3600
+  num-epochs-to-retain: 1
+  max-checkpoints-in-batch: 10
+  max-transactions-in-batch: 1000
+  pruning-run-delay-seconds: 60
+
+# 状态同步配置 - 主网
+state-archive-read-config:
+  - ingestion-url: "https://checkpoints.mainnet.sui.io"
+    concurrency: 5
+
+# 可选: 启用索引处理
+enable-index-processing: true
+
+# 可选: 配置RPC限制
+json-rpc-server-config:
+  max-request-size: 2097152
+  max-response-size: 2097152
+  max-subscriptions: 100
