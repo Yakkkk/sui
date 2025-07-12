@@ -364,6 +364,23 @@ impl AuthorityPerpetualTables {
         )
     }
 
+    /// Opens the authority store in read-only mode but returns a read-write handle.
+    ///
+    /// # Warning
+    /// Despite returning a read-write handle, this database is opened in read-only mode.
+    /// All write operations will fail at runtime. This function is intended for cases
+    /// where you need a read-write handle type for API compatibility but only perform
+    /// read operations.
+    ///
+    /// # Arguments
+    /// * `parent_path` - Path to the parent directory containing the database
+    pub fn open_readonly_as_rw(parent_path: &Path) -> AuthorityPerpetualTables {
+        Self::get_rw_handle_readonly_inner(
+            Self::path(parent_path),
+            MetricConf::new("perpetual_readonly_as_rw"),
+        )
+    }
+
     pub fn open_readonly(parent_path: &Path) -> AuthorityPerpetualTablesReadOnly {
         Self::get_read_only_handle(
             Self::path(parent_path),

@@ -434,6 +434,31 @@ pub fn derive_dbmap_utils_general(input: TokenStream) -> TokenStream {
                         #generics_names: #generics_bounds_token,
                     )*
                 > #intermediate_db_map_struct_name #generics {
+                /// Opens the tables in read-only mode but returns an instance of the original struct.
+                /// All write operations will fail at runtime.
+                #[allow(unused_parens)]
+                pub fn open_tables_read_only_as_rw_impl(
+                    path: std::path::PathBuf,
+                    metric_conf: typed_store::rocks::MetricConf,
+                ) -> Self {
+                    let p: std::path::PathBuf = tempfile::tempdir()
+                        .expect("Failed to open temporary directory")
+                        .into_path();
+
+                    let inner = Self::open_tables_impl(
+                        path,
+                        Some(p),
+                        metric_conf,
+                        None,
+                        None,
+                        false,
+                    );
+                    Self {
+                        #(
+                            #field_names: inner.#field_names,
+                        )*
+                    }
+                }
                 /// Opens a set of tables in read-write mode
                 /// If as_secondary_with_path is set, the DB is opened in read only mode with the path specified
                 pub fn open_tables_impl(
@@ -546,6 +571,32 @@ pub fn derive_dbmap_utils_general(input: TokenStream) -> TokenStream {
                     metric_conf: typed_store::rocks::MetricConf,
                     ) -> #secondary_db_map_struct_name #generics {
                     #secondary_db_map_struct_name::open_tables_read_only(primary_path, with_secondary_path, metric_conf, global_db_options_override)
+                }
+
+                /// Opens the database in read-only mode but returns a read-write handle.
+                ///
+                /// # Warning
+                /// Despite returning a read-write handle, this database is opened in read-only mode.
+                /// All write operations will fail at runtime. This function is intended for cases
+                /// where you need a read-write handle type for API compatibility but only perform
+                /// read operations.
+                ///
+                /// # Arguments
+                /// * `primary_path` - Path to the primary database
+                /// * `metric_conf` - Metrics configuration for the database
+                pub fn get_rw_handle_readonly_inner(
+                    primary_path: std::path::PathBuf,
+                    metric_conf: typed_store::rocks::MetricConf,
+                ) -> Self {
+                    let inner = #intermediate_db_map_struct_name::open_tables_read_only_as_rw_impl(
+                        primary_path,
+                        metric_conf,
+                    );
+                    Self {
+                        #(
+                            #field_names: inner.#field_names,
+                        )*
+                    }
                 }
             }
             #secondary_code
