@@ -43,6 +43,13 @@ pub trait WriteApi {
         &self,
         tx_bytes: Base64,
     ) -> RpcResult<DryRunTransactionBlockResponse>;
+
+    #[method(name = "dryRunTransactionBlockOverride")]
+    async fn dry_run_transaction_block_override(
+        &self,
+        tx_bytes: Base64,
+        override_objects: Base64,
+    ) -> RpcResult<DryRunTransactionBlockResponse>;
 }
 
 pub(crate) struct Write(pub HttpClient);
@@ -84,6 +91,17 @@ impl WriteApiServer for Write {
     ) -> RpcResult<DryRunTransactionBlockResponse> {
         self.0
             .dry_run_transaction_block(tx_bytes)
+            .await
+            .map_err(client_error_to_error_object)
+    }
+
+    async fn dry_run_transaction_block_override(
+        &self,
+        tx_bytes: Base64,
+        override_objects: Base64,
+    ) -> RpcResult<DryRunTransactionBlockResponse> {
+        self.0
+            .dry_run_transaction_block_override(tx_bytes, override_objects)
             .await
             .map_err(client_error_to_error_object)
     }

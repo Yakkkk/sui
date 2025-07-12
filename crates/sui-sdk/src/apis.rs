@@ -37,6 +37,7 @@ use sui_types::base_types::{ObjectID, SequenceNumber, SuiAddress, TransactionDig
 use sui_types::dynamic_field::DynamicFieldName;
 use sui_types::event::EventID;
 use sui_types::messages_checkpoint::CheckpointSequenceNumber;
+use sui_types::object::Object;
 use sui_types::quorum_driver_types::ExecuteTransactionRequestType;
 use sui_types::sui_serde::BigInt;
 use sui_types::sui_system_state::sui_system_state_summary::SuiSystemStateSummary;
@@ -646,6 +647,35 @@ impl ReadApi {
             .http
             .dry_run_transaction_block(Base64::from_bytes(&bcs::to_bytes(&tx)?))
             .await?)
+    }
+
+    /// Dry run a transaction block with specific objects overridden. Returns an error upon failure.
+    ///
+    /// Simulate running the transaction with modified object states, including all standard checks,
+    /// without actually running it. This is useful for testing transaction behavior with different
+    /// object states, MEV analysis, and advanced debugging scenarios.
+    /// 
+    /// The override objects allow you to simulate "what if" scenarios by providing alternative
+    /// object states that will be used instead of the current on-chain state during simulation.
+    /// This does not affect the actual blockchain state.
+    ///
+    /// # Security Note
+    /// This method is only available on fullnodes and should not be used in production
+    /// transaction submission. The override objects are used only for simulation purposes.
+    pub async fn dry_run_transaction_block_override(
+        &self,
+        tx: TransactionData,
+        override_objects: Vec<(ObjectID, Object)>,
+    ) -> SuiRpcResult<DryRunTransactionBlockResponse> {
+        let resp = self.api
+            .http
+            .dry_run_transaction_block_override(
+                Base64::from_bytes(&bcs::to_bytes(&tx)?),
+                Base64::from_bytes(&bcs::to_bytes(&override_objects)?),
+            )
+            .await?;
+
+        Ok(resp)
     }
 
     /// Return the inspection of the transaction block, or an error upon failure.
