@@ -82,7 +82,7 @@ use sui_types::sui_system_state::{get_sui_system_state, SuiSystemState};
 use sui_types::transaction::{VerifiedSignedTransaction, VerifiedTransaction};
 use tap::TapOptional;
 use tracing::{debug, info, instrument, trace, warn};
-
+use typed_store::Map;
 use super::cache_types::Ticket;
 use super::ExecutionCacheAPI;
 use super::{
@@ -405,6 +405,16 @@ impl CachedCommittedData {
         assert!(self.transaction_events.is_empty());
         assert!(self.executed_effects_digests.is_empty());
         assert_empty(&self._transaction_objects);
+    }
+
+    fn clear(&self) {
+        self.object_cache.invalidate_all();
+        self.marker_cache.invalidate_all();
+        self.transactions.invalidate_all();
+        self.transaction_effects.invalidate_all();
+        self.transaction_events.invalidate_all();
+        self.executed_effects_digests.invalidate_all();
+        self._transaction_objects.invalidate_all();
     }
 }
 
@@ -1328,6 +1338,28 @@ impl WritebackCache {
         self.packages.invalidate_all();
         assert_empty(&self.packages);
     }
+
+    async fn update_package_cache(&self, package_updates: &[(ObjectID, Object)]) -> SuiResult {
+        for (id, object) in package_updates {
+            self.packages
+                .insert(*id, PackageObject::new(object.clone()));
+        }
+        Ok(())
+    }
+
+    pub fn reload_cached(&self, objects: Vec<(ObjectID, Object)>) {
+        for (object_id, object) in objects {
+            let _ = self.object_by_id_cache.insert(
+                &object_id,
+                LatestObjectCacheEntry::Object(object.version(), object.into()),
+                Ticket::Write,
+            );
+        }
+    }
+
+    pub fn clear(&self) {
+        self.cached.clear();
+    }
 }
 
 impl ExecutionCacheAPI for WritebackCache {}
@@ -2203,6 +2235,29 @@ impl ExecutionCacheWrite for WritebackCache {
     #[cfg(test)]
     fn write_object_entry_for_test(&self, object: Object) {
         self.write_object_entry(&object.id(), object.version(), object.into());
+    }
+
+    fn update_package_cache<'a>(
+        &'a self,
+        package_updates: &'a [(ObjectID, Object)],
+    ) -> BoxFuture<'a, SuiResult> {
+        WritebackCache::update_package_cache(self, package_updates).boxed()
+    }
+
+    fn reload_objects(&self, objects: Vec<(ObjectID, Object)>) {
+        self.reload_cached(objects);
+    }
+
+    fn update_underlying(&self, clear_cache: bool) {
+        self.store
+            .perpetual_tables
+            .objects
+            .try_catch_up_with_primary()
+            .unwrap();
+
+        if clear_cache {
+            self.clear();
+        }
     }
 }
 
