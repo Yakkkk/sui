@@ -183,11 +183,13 @@ pub use crate::checkpoints::checkpoint_executor::utils::{
 use crate::authority::authority_store_tables::AuthorityPrunerTables;
 use crate::authority_client::NetworkAuthorityClient;
 use crate::override_cache::{InputLoaderCache, ObjectCache};
+use crate::tx_handler::TxHandler;
 use crate::validator_tx_finalizer::ValidatorTxFinalizer;
 #[cfg(msim)]
 use sui_types::committee::CommitteeTrait;
 use sui_types::deny_list_v2::check_coin_deny_list_v2_during_signing;
 use sui_types::execution_config_utils::to_binary_config;
+use crate::cache_update_handler::CacheUpdateHandler;
 
 #[cfg(test)]
 #[path = "unit_tests/authority_tests.rs"]
@@ -245,6 +247,49 @@ mod weighted_moving_average;
 
 pub(crate) mod authority_store;
 pub mod backpressure;
+
+const ABEX_SWAP_EVENT: &str =
+    "0xceab84acf6bf70f503c3b0627acaff6b3f84cee0f2d7ed53d00fa6c2a168d14f::market::Swapped";
+const AFTERMATH_SWAP_EVENT: &str =
+    "0xc4049b2d1cc0f6e017fda8260e4377cecd236bd7f56a54fee120816e72e2e0dd::events::SwapEventV2";
+const BABY_SWAP_EVENT: &str =
+    "0x227f865230dd4fc947321619f56fee37dc7ac582eb22e3eab29816f717512d9d::liquidity_pool::EventSwap";
+const BLUE_MOVE_SWAP_EVENT: &str =
+    "0xb24b6789e088b876afabca733bed2299fbc9e2d6369be4d1acfa17d8145454d9::swap::Swap_Event";
+const CETUS_SWAP_EVENT: &str =
+    "0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb::pool::SwapEvent";
+const FLOWX_AMM_SWAP_EVENT: &str =
+    "0xba153169476e8c3114962261d1edc70de5ad9781b83cc617ecc8c1923191cae0::pair::Swapped";
+const FLOWX_CLMM_SWAP_EVENT: &str =
+    "0x25929e7f29e0a30eb4e692952ba1b5b65a3a4d65ab5f2a32e1ba3edcb587f26d::pool::Swap";
+const INTEREST_SWAP_EVENT: &str =
+    "0x5c45d10c26c5fb53bfaff819666da6bc7053d2190dfa29fec311cc666ff1f4b0::core::SwapToken";
+const KRIYA_AMM_SWAP_EVENT: &str =
+    "0xa0eba10b173538c8fecca1dff298e488402cc9ff374f8a12ca7758eebe830b66::spot_dex::SwapEvent";
+const KRIYA_CLMM_SWAP_EVENT: &str =
+    "0xf6c05e2d9301e6e91dc6ab6c3ca918f7d55896e1f1edd64adc0e615cde27ebf1::trade::SwapEvent";
+const SUISWAP_SWAP_EVENT: &str =
+    "0x361dd589b98e8fcda9a7ee53b85efabef3569d00416640d2faa516e3801d7ffc::pool::SwapTokenEvent";
+const TURBOS_SWAP_EVENT: &str =
+    "0x91bfbc386a41afcfd9b2533058d7e915a1d3829089cc268ff4333d54d6339ca1::pool::SwapEvent";
+
+const fn swap_events() -> [&'static str; 12] {
+    [
+        ABEX_SWAP_EVENT,
+        AFTERMATH_SWAP_EVENT,
+        BABY_SWAP_EVENT,
+        BLUE_MOVE_SWAP_EVENT,
+        CETUS_SWAP_EVENT,
+        FLOWX_AMM_SWAP_EVENT,
+        FLOWX_CLMM_SWAP_EVENT,
+        INTEREST_SWAP_EVENT,
+        KRIYA_AMM_SWAP_EVENT,
+        KRIYA_CLMM_SWAP_EVENT,
+        SUISWAP_SWAP_EVENT,
+        TURBOS_SWAP_EVENT,
+    ]
+}
+
 
 /// Prometheus metrics which can be displayed in Grafana, queried and alerted on
 pub struct AuthorityMetrics {
@@ -949,6 +994,10 @@ pub struct AuthorityState {
 
     /// Traffic controller for Sui core servers (json-rpc, validator service)
     pub traffic_controller: Option<Arc<TrafficController>>,
+
+    pub tx_handler: Arc<TxHandler>,
+
+    pub cache_update_handler: Arc<CacheUpdateHandler>,
 }
 
 /// The authority state encapsulates all state, drives execution, and ensures safety.
@@ -1596,13 +1645,14 @@ impl AuthorityState {
         // non-transient (transaction input is invalid, move vm errors). However, all errors from
         // this function occur before we have written anything to the db, so we commit the tx
         // guard and rely on the client to retry the tx (if it was transient).
-        let (transaction_outputs, timings, execution_error_opt) = match self.execute_certificate(
-            &execution_guard,
-            certificate,
-            input_objects,
-            expected_effects_digest,
-            epoch_store,
-        ) {
+        let (transaction_outputs, timings, execution_error_opt, inner_temp_store) = match self
+            .execute_certificate(
+                &execution_guard,
+                certificate,
+                input_objects,
+                expected_effects_digest,
+                epoch_store,
+            ) {
             Err(e) => {
                 info!(name = ?self.name, ?tx_digest, "Error executing transaction: {e}");
                 tx_guard.release();
@@ -1623,6 +1673,7 @@ impl AuthorityState {
                 transaction_outputs,
                 execution_guard,
                 epoch_store,
+                inner_temp_store,
             );
             if let Err(err) = commit_result {
                 error!(?tx_digest, "Error committing transaction: {err}");
@@ -1699,13 +1750,38 @@ impl AuthorityState {
         transaction_outputs: TransactionOutputs,
         _execution_guard: ExecutionLockReadGuard<'_>,
         epoch_store: &Arc<AuthorityPerEpochStore>,
+        inner_temporary_store: InnerTemporaryStore,
     ) -> SuiResult {
+        let raw_events = transaction_outputs.events.clone();
+        let sui_events: Vec<SuiEvent> = raw_events
+            .data
+            .iter()
+            .enumerate()
+            .map(|(seq, event)| {
+                let mut layout_resolver = epoch_store.executor().type_layout_resolver(Box::new(
+                    PackageStoreWithFallback::new(
+                        &inner_temporary_store,
+                        self.get_backing_package_store(),
+                    ),
+                ));
+                let layout = layout_resolver.get_annotated_layout(&event.type_)?;
+                SuiEvent::try_from(
+                    event.clone(),
+                    *certificate.digest(),
+                    seq as u64,
+                    None,
+                    layout,
+                )
+            })
+            .collect::<Result<_, _>>()?;
+
         let _scope: Option<mysten_metrics::MonitoredScopeGuard> =
             monitored_scope("Execution::commit_certificate");
         let _metrics_guard = self.metrics.commit_certificate_latency.start_timer();
 
         let tx_digest = certificate.digest();
         let output_keys = transaction_outputs.output_keys.clone();
+        let effects = transaction_outputs.effects.clone();
 
         // The insertion to epoch_store is not atomic with the insertion to the perpetual store. This is OK because
         // we insert to the epoch store first. And during lookups we always look up in the perpetual store first.
@@ -1719,13 +1795,51 @@ impl AuthorityState {
         fail_point!("crash");
 
         self.get_cache_writer()
-            .write_transaction_outputs(epoch_store.epoch(), transaction_outputs.into());
+            .write_transaction_outputs(epoch_store.epoch(), transaction_outputs.clone().into());
+
+        // if system tx, skip
+        if !certificate.transaction_data().is_system_tx() {
+            let changed_objects: Vec<_> = transaction_outputs
+                .written
+                .iter()
+                .map(|(id, obj)| (*id, obj.clone()))
+                .collect();
+
+            // if no changed objects, skip
+            if !changed_objects.is_empty() {
+                let has_swap_events = sui_events.iter().any(|event| {
+                    let event_type = event.type_.to_string();
+                    swap_events()
+                        .iter()
+                        .any(|swap_event| event_type.starts_with(swap_event))
+                });
+
+                if has_swap_events {
+                    let cache_handler = Arc::clone(&self.cache_update_handler);
+                    tokio::spawn(async move {
+                        cache_handler.notify_written(changed_objects).await;
+                    });
+                }
+            }
+        }
 
         if certificate.transaction_data().is_end_of_epoch_tx() {
             // At the end of epoch, since system packages may have been upgraded, force
             // reload them in the cache.
             self.get_object_cache_reader()
                 .force_reload_system_packages(&BuiltInFramework::all_package_ids());
+        }
+
+        if !certificate.transaction_data().is_system_tx()
+            && !sui_events.is_empty()
+            && !transaction_outputs.written.is_empty()
+        {
+            let tx_handler = Arc::clone(&self.tx_handler);
+            tokio::spawn(async move {
+                let _ = tx_handler
+                    .send_tx_effects_and_events(&effects, sui_events)
+                    .await;
+            });
         }
 
         match self.execution_scheduler.as_ref() {
@@ -1804,6 +1918,7 @@ impl AuthorityState {
         TransactionOutputs,
         Vec<ExecutionTiming>,
         Option<ExecutionError>,
+        InnerTemporaryStore,
     )> {
         let _scope = monitored_scope("Execution::prepare_certificate");
         let _metrics_guard = self.metrics.prepare_certificate_latency.start_timer();
@@ -1911,7 +2026,7 @@ impl AuthorityState {
         let transaction_outputs = TransactionOutputs::build_transaction_outputs(
             certificate.clone().into_unsigned(),
             effects,
-            inner_temp_store,
+            inner_temp_store.clone(),
         );
 
         let elapsed = prepare_certificate_start_time.elapsed().as_micros() as f64;
@@ -1925,7 +2040,12 @@ impl AuthorityState {
             );
         }
 
-        Ok((transaction_outputs, timings, execution_error_opt.err()))
+        Ok((
+            transaction_outputs,
+            timings,
+            execution_error_opt.err(),
+            inner_temp_store,
+        ))
     }
 
     pub fn prepare_certificate_for_benchmark(
@@ -1937,7 +2057,7 @@ impl AuthorityState {
         let lock = RwLock::new(epoch_store.epoch());
         let execution_guard = lock.try_read().unwrap();
 
-        let (transaction_outputs, _timings, execution_error_opt) = self.execute_certificate(
+        let (transaction_outputs, _timings, execution_error_opt, _) = self.execute_certificate(
             &execution_guard,
             certificate,
             input_objects,
@@ -3436,6 +3556,8 @@ impl AuthorityState {
             chain_identifier,
             congestion_tracker: Arc::new(CongestionTracker::new()),
             traffic_controller,
+            tx_handler: Arc::new(TxHandler::default()),
+            cache_update_handler: Arc::new(CacheUpdateHandler::new()),
         });
 
         let state_clone = Arc::downgrade(&state);
@@ -5715,7 +5837,7 @@ impl AuthorityState {
             epoch_store,
         )?;
 
-        let (transaction_outputs, _timings, _execution_error_opt) = self.execute_certificate(
+        let (transaction_outputs, _timings, _execution_error_opt, _) = self.execute_certificate(
             &execution_guard,
             &executable_tx,
             input_objects,

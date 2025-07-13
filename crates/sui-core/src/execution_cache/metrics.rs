@@ -156,8 +156,8 @@ impl ExecutionCacheMetrics {
             ["package", "uncommitted"],
             ["package", "committed"],
         ]
-            .iter()
-            .map(|label| self.cache_misses.with_label_values(label).get())
-            .sum()
+        .iter()
+        .map(|label| self.cache_misses.with_label_values(label).get())
+        .sum()
     }
 }
