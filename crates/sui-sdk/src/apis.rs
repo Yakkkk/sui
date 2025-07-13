@@ -654,7 +654,7 @@ impl ReadApi {
     /// Simulate running the transaction with modified object states, including all standard checks,
     /// without actually running it. This is useful for testing transaction behavior with different
     /// object states, MEV analysis, and advanced debugging scenarios.
-    /// 
+    ///
     /// The override objects allow you to simulate "what if" scenarios by providing alternative
     /// object states that will be used instead of the current on-chain state during simulation.
     /// This does not affect the actual blockchain state.
@@ -667,7 +667,8 @@ impl ReadApi {
         tx: TransactionData,
         override_objects: Vec<(ObjectID, Object)>,
     ) -> SuiRpcResult<DryRunTransactionBlockResponse> {
-        let resp = self.api
+        let resp = self
+            .api
             .http
             .dry_run_transaction_block_override(
                 Base64::from_bytes(&bcs::to_bytes(&tx)?),
