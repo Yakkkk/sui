@@ -4,16 +4,176 @@ use std::sync::{
     Arc,
 };
 use anyhow::Result;
+use dashmap::DashSet;
 use sui_types::base_types::ObjectID;
 use sui_types::object::Object;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
+use tokio::time::{interval, Duration};
+use std::fs::{File, OpenOptions};
+use std::io::Write;
 
 use tracing::{error, info, warn};
 
 const SOCKET_PATH: &str = "/tmp/sui/sui_cache_updates.sock";
+pub const POOL_RELATED_OBJECTS_PATH: &str = "/opt/sui/config/pool_related_ids.txt";
+
+// Configuration constants with environment variable overrides
+fn get_batch_size() -> usize {
+    std::env::var("POOL_ID_BATCH_SIZE")
+        .unwrap_or_else(|_| "100".to_string())
+        .parse()
+        .unwrap_or(100)
+}
+
+fn get_flush_interval() -> Duration {
+    let secs = std::env::var("POOL_ID_FLUSH_INTERVAL_SECS")
+        .unwrap_or_else(|_| "5".to_string())
+        .parse()
+        .unwrap_or(5);
+    Duration::from_secs(secs)
+}
+
+/// Reads and parses a list of object IDs from a predefined path.
+/// Returns an empty set if the file doesn't exist or cannot be read.
+pub fn pool_related_object_ids() -> DashSet<ObjectID> {
+    let content = match std::fs::read_to_string(POOL_RELATED_OBJECTS_PATH) {
+        Ok(content) => content,
+        Err(e) => {
+            warn!("Failed to read pool related objects file: {}, starting with empty set", e);
+            return DashSet::new();
+        }
+    };
+
+    let set = DashSet::new();
+    for line in content.trim().split('\n') {
+        if line.trim().is_empty() {
+            continue;
+        }
+        match line.trim().parse::<ObjectID>() {
+            Ok(id) => {
+                set.insert(id);
+            }
+            Err(e) => {
+                warn!("Failed to parse object ID '{}': {}", line, e);
+            }
+        }
+    }
+    set
+}
+
+/// Async pool state manager with batched writing
+pub struct PoolRelatedState {
+    related_ids: DashSet<ObjectID>,
+    sender: mpsc::UnboundedSender<ObjectID>,
+    _writer_handle: JoinHandle<()>,
+}
+
+impl PoolRelatedState {
+    pub fn new() -> Self {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        
+        // Start background batched writer task
+        let writer_handle = tokio::spawn(async move {
+            Self::batched_writer_task(receiver).await;
+        });
+        
+        Self {
+            related_ids: pool_related_object_ids(),
+            sender,
+            _writer_handle: writer_handle,
+        }
+    }
+    
+    /// Record a pool-related object ID (non-blocking)
+    pub fn record_pool_related_id(&self, object_id: &ObjectID) {
+        if !self.related_ids.contains(object_id) {
+            self.related_ids.insert(*object_id);
+            // Non-blocking send, ignore send failures to not affect main flow
+            if let Err(_) = self.sender.send(*object_id) {
+                warn!("Failed to send pool related ID to writer task");
+            }
+        }
+    }
+
+    /// Background task for batched writing
+    async fn batched_writer_task(mut receiver: mpsc::UnboundedReceiver<ObjectID>) {
+        let batch_size = get_batch_size();
+        let flush_interval = get_flush_interval();
+        
+        // Ensure directory exists
+        if let Some(parent) = std::path::Path::new(POOL_RELATED_OBJECTS_PATH).parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                error!("Failed to create directory for pool related objects file: {}", e);
+                return;
+            }
+        }
+        
+        let mut file = match OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(POOL_RELATED_OBJECTS_PATH) {
+            Ok(file) => file,
+            Err(e) => {
+                error!("Failed to open pool related objects file: {}", e);
+                return;
+            }
+        };
+            
+        let mut batch = Vec::with_capacity(batch_size);
+        let mut flush_timer = interval(flush_interval);
+        
+        info!("Started pool related ID writer task with batch_size={}, flush_interval={:?}", 
+              batch_size, flush_interval);
+        
+        loop {
+            tokio::select! {
+                // Receive new IDs
+                Some(object_id) = receiver.recv() => {
+                    batch.push(object_id);
+                    
+                    // Flush when batch is full
+                    if batch.len() >= batch_size {
+                        Self::flush_batch(&mut file, &mut batch);
+                    }
+                }
+                
+                // Periodic flush
+                _ = flush_timer.tick() => {
+                    if !batch.is_empty() {
+                        Self::flush_batch(&mut file, &mut batch);
+                    }
+                }
+                
+                // Handle receiver closed
+                else => {
+                    info!("Pool related ID receiver closed, flushing remaining batch");
+                    if !batch.is_empty() {
+                        Self::flush_batch(&mut file, &mut batch);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    
+    /// Flush a batch of object IDs to file
+    fn flush_batch(file: &mut File, batch: &mut Vec<ObjectID>) {
+        let batch_size = batch.len();
+        for id in batch.drain(..) {
+            if let Err(e) = writeln!(file, "{}", id) {
+                warn!("Failed to write pool related ID {}: {}", id, e);
+            }
+        }
+        if let Err(e) = file.flush() {
+            warn!("Failed to flush pool related IDs: {}", e);
+        } else {
+            info!("Flushed {} pool related IDs to file", batch_size);
+        }
+    }
+}
 
 #[derive(Debug)]
 struct CacheBroadcastMessage {
