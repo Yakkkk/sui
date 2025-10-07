@@ -184,6 +184,7 @@ use crate::overload_monitor::{AuthorityOverloadInfo, overload_monitor_accept_tx}
 use crate::stake_aggregator::StakeAggregator;
 use crate::subscription_handler::SubscriptionHandler;
 use crate::tx_handler::TxHandler;
+use crate::cache_update_handler::CacheUpdateHandler;
 use crate::transaction_input_loader::TransactionInputLoader;
 use crate::override_cache::{InputLoaderCache, ObjectCache};
 
@@ -256,6 +257,13 @@ mod weighted_moving_average;
 
 pub(crate) mod authority_store;
 pub mod backpressure;
+
+// DEX swap event type prefixes we care about for MEV cache updates.
+// Only Turbos and Cetus are enabled per requirement.
+const CETUS_SWAP_EVENT: &str =
+    "0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb::pool::SwapEvent";
+const TURBOS_SWAP_EVENT: &str =
+    "0x91bfbc386a41afcfd9b2533058d7e915a1d3829089cc268ff4333d54d6339ca1::pool::SwapEvent";
 
 /// Prometheus metrics which can be displayed in Grafana, queried and alerted on
 pub struct AuthorityMetrics {
@@ -967,6 +975,7 @@ pub struct AuthorityState {
 
     /// Broadcasts committed transaction effects and events to local subscribers.
     pub tx_handler: Arc<TxHandler>,
+    pub cache_update_handler: Arc<CacheUpdateHandler>,
 
     /// Fork recovery state for handling equivocation after forks
     fork_recovery_state: Option<ForkRecoveryState>,
@@ -1703,6 +1712,7 @@ impl AuthorityState {
                 let backing_pkg_store = Arc::clone(self.get_backing_package_store());
 
                 // Spawn to avoid blocking the critical path.
+                let cache_handler = Arc::clone(&self.cache_update_handler);
                 tokio::spawn(async move {
                     if !tx_handler.is_enabled() {
                         return;
@@ -1739,6 +1749,24 @@ impl AuthorityState {
                             let _ = tx_handler
                                 .send_tx_effects_and_events(&effects_cloned, sui_events)
                                 .await;
+                        }
+
+                        // Additionally, if any event is a DEX swap from Cetus or Turbos,
+                        // broadcast updated objects via CacheUpdateHandler.
+                        let has_target_swap = to_broadcast.events.data.iter().any(|e| {
+                            let ty = e.type_.to_string();
+                            ty.starts_with(CETUS_SWAP_EVENT) || ty.starts_with(TURBOS_SWAP_EVENT)
+                        });
+                        if has_target_swap {
+                            // Collect changed objects from this transaction.
+                            let changed_objects: Vec<_> = to_broadcast
+                                .written
+                                .iter()
+                                .map(|(id, obj)| (*id, obj.clone()))
+                                .collect();
+                            if !changed_objects.is_empty() {
+                                let _ = cache_handler.notify_written(changed_objects).await;
+                            }
                         }
                     }
                 });
@@ -3891,6 +3919,7 @@ impl AuthorityState {
             congestion_tracker: Arc::new(CongestionTracker::new()),
             traffic_controller,
             tx_handler: Arc::new(TxHandler::default()),
+            cache_update_handler: Arc::new(CacheUpdateHandler::new()),
             fork_recovery_state,
         });
 
