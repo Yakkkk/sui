@@ -169,6 +169,7 @@ use crate::authority::authority_store_pruner::{
 };
 use crate::authority::epoch_start_configuration::EpochStartConfigTrait;
 use crate::authority::epoch_start_configuration::EpochStartConfiguration;
+use crate::cache_update_handler::CacheUpdateHandler;
 use crate::checkpoints::CheckpointStore;
 use crate::epoch::committee_store::CommitteeStore;
 use crate::execution_cache::{
@@ -180,13 +181,12 @@ use crate::global_state_hasher::{GlobalStateHashStore, GlobalStateHasher, Wrappe
 use crate::metrics::LatencyObserver;
 use crate::metrics::RateTracker;
 use crate::module_cache_metrics::ResolverMetrics;
-use crate::overload_monitor::{AuthorityOverloadInfo, overload_monitor_accept_tx};
+use crate::overload_monitor::{overload_monitor_accept_tx, AuthorityOverloadInfo};
+use crate::override_cache::{InputLoaderCache, ObjectCache};
 use crate::stake_aggregator::StakeAggregator;
 use crate::subscription_handler::SubscriptionHandler;
-use crate::tx_handler::TxHandler;
-use crate::cache_update_handler::CacheUpdateHandler;
 use crate::transaction_input_loader::TransactionInputLoader;
-use crate::override_cache::{InputLoaderCache, ObjectCache};
+use crate::tx_handler::TxHandler;
 
 #[cfg(msim)]
 pub use crate::checkpoints::checkpoint_executor::utils::{
