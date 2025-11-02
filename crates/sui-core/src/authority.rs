@@ -2352,14 +2352,17 @@ impl AuthorityState {
     )> {
         let epoch_store = self.load_epoch_store_one_call_per_task();
         if !self.is_fullnode(&epoch_store) {
-            return Err(SuiError::UnsupportedFeatureError {
+            // Align error type with upstream: use SuiErrorKind variants and convert.
+            return Err(SuiErrorKind::UnsupportedFeatureError {
                 error: "dry-exec is only supported on fullnodes".to_string(),
-            });
+            }
+            .into());
         }
         if transaction.kind().is_system_tx() {
-            return Err(SuiError::UnsupportedFeatureError {
+            return Err(SuiErrorKind::UnsupportedFeatureError {
                 error: "dry-exec does not support system transactions".to_string(),
-            });
+            }
+            .into());
         }
 
         // Cheap validity checks for a transaction, including input size limits.
@@ -2524,7 +2527,7 @@ impl AuthorityState {
                     transaction,
                     &module_cache,
                 )
-                .map_err(|e| SuiError::TransactionSerializationError {
+                .map_err(|e| SuiErrorKind::TransactionSerializationError {
                     error: format!(
                         "Failed to convert transaction to SuiTransactionBlockData: {}",
                         e

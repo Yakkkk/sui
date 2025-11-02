@@ -79,3 +79,6 @@ lcov.info
 
 .sparse
 docs/content/documentation.json
+
+# Local cargo target dir for CI-sandbox workaround
+**/.cargo-target
